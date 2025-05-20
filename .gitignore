@@ -7,6 +7,8 @@
 *.dll
 *.so
 *.dylib
+bin/
+gen/
 
 # Test binary, built with `go test -c`
 *.test
@@ -23,3 +25,10 @@ go.work.sum
 
 # env file
 .env
+
+# intellij idea folder
+.idea
+
+# generated folders
+gen
+kubeconfigs
