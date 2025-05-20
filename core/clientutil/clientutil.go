@@ -4,13 +4,20 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-func CreateKubeClient(kubeConfigPath string) (*kubernetes.Clientset, error) {
+func CreateKubeClient(kubeConfigPath string, poolSize int) (*kubernetes.Clientset, error) {
 	clientConfig, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 	if err != nil {
 		return nil, err
+	}
+	if float32(poolSize) > 2*rest.DefaultQPS {
+		clientConfig.QPS = float32(poolSize / 2)
+	}
+	if poolSize > 2*rest.DefaultBurst {
+		clientConfig.Burst = poolSize / 2
 	}
 	clientSet, err := kubernetes.NewForConfig(clientConfig)
 	if err != nil {
@@ -19,10 +26,16 @@ func CreateKubeClient(kubeConfigPath string) (*kubernetes.Clientset, error) {
 	return clientSet, nil
 }
 
-func CreateDynamicAndDiscoveryClients(kubeConfigPath string) (dynamic.Interface, *discovery.DiscoveryClient, error) {
+func CreateDynamicAndDiscoveryClients(kubeConfigPath string, poolSize int) (dynamic.Interface, *discovery.DiscoveryClient, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 	if err != nil {
 		return nil, nil, err
+	}
+	if float32(poolSize) > 2*rest.DefaultQPS {
+		config.QPS = float32(poolSize / 2)
+	}
+	if poolSize > 2*rest.DefaultBurst {
+		config.Burst = poolSize / 2
 	}
 	dyn, err := dynamic.NewForConfig(config)
 	if err != nil {

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/alitto/pond/v2"
 	"github.com/elankath/copyshoot/api"
 	clientutil "github.com/elankath/copyshoot/core/clientutil"
 	authenticationv1alpha1 "github.com/gardener/gardener/pkg/apis/authentication/v1alpha1"
@@ -74,6 +75,7 @@ type GardenerShootCopier struct {
 	dynamicClient   dynamic.Interface
 	discoveryClient *discovery.DiscoveryClient
 	targetClient    *kubernetes.Clientset
+	pool            pond.Pool
 }
 
 func NewShootCopierFromConfig(copyCfg api.CopierConfig) (copier api.ShootCopier, err error) {
@@ -93,78 +95,79 @@ func NewShootCopierFromConfig(copyCfg api.CopierConfig) (copier api.ShootCopier,
 
 	var gsc GardenerShootCopier
 	gsc.cfg = copyCfg
-	//gsc.gardenClient, err = clientutil.CreateVirtualGardenClient()
-	//gsc.targetClient, err = clientutil.CreateKubeClient(opts.Kubeconfig)
-	//if err != nil {
-	//	err = fmt.Errorf("%w: bad kubeconfig %q: %w", api.ErrCreateKubeClient, opts.Kubeconfig, err)
-	//	return
-	//}
-	gsc.dynamicClient, gsc.discoveryClient, err = clientutil.CreateDynamicAndDiscoveryClients(copyCfg.KubeConfigPath)
+	gsc.dynamicClient, gsc.discoveryClient, err = clientutil.CreateDynamicAndDiscoveryClients(copyCfg.KubeConfigPath, copyCfg.PoolSize)
 	if err != nil {
 		err = fmt.Errorf("%w: cannot create kube clients from %q: %w", api.ErrCreateKubeClient, copyCfg.KubeConfigPath, err)
 		return
 	}
+	gsc.pool = pond.NewPool(copyCfg.PoolSize)
 	copier = &gsc
 	return
 }
 
-func (g *GardenerShootCopier) DownloadObjects(ctx context.Context, baseObjDir string, gvrList []schema.GroupVersionResource) (err error) {
+func (g *GardenerShootCopier) DownloadObjects(parentCtx context.Context, baseObjDir string, gvrList []schema.GroupVersionResource) error {
 	slog.Info("Downloading objects")
 	apiGroupResources, err := restmapper.GetAPIGroupResources(g.discoveryClient)
 	if err != nil {
 		return fmt.Errorf("%w: failed to fetch API group resources: %w", api.ErrDiscovery, err)
 	}
+	ctx, cancelFn := context.WithCancelCause(parentCtx)
 	err = ValidateGVRs(apiGroupResources, gvrList)
 	if err != nil {
-		err = fmt.Errorf("%w: %w", api.ErrDownloadFailed, err)
-		return
+		return fmt.Errorf("%w: %w", api.ErrDownloadFailed, err)
 	}
 
 	allNamespaces, err := getAllNamespaces(ctx, g.dynamicClient)
 	if err != nil {
-		return
+		return err
 	}
 
+	taskGroup := g.pool.NewGroupContext(ctx)
+
 	var isNamespaced bool
-	var objList *unstructured.UnstructuredList
 	for _, gvr := range gvrList {
 		isNamespaced, err = isNamespacedResource(apiGroupResources, gvr)
 		if err != nil {
-			err = fmt.Errorf("%w: %w", api.ErrDiscovery, err)
-			return
+			return fmt.Errorf("%w: %w", api.ErrDiscovery, err)
 		}
 		resourceDir := filepath.Join(baseObjDir, gvr.Group+"-"+gvr.Version+"-"+gvr.Resource)
 		err = os.MkdirAll(resourceDir, 0755)
 		if err != nil {
-			err = fmt.Errorf("%w: failed to create directory %q: %w", api.ErrDownloadFailed, resourceDir, err)
-			return
+			return fmt.Errorf("%w: failed to create directory %q: %w", api.ErrDownloadFailed, resourceDir, err)
 		}
 
 		if isNamespaced {
 			for _, ns := range allNamespaces {
-				objList, err = g.dynamicClient.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
-				if err != nil {
-					err = fmt.Errorf("%w: failed to list objects for gvr %q in namespace %q: %w", api.ErrDownloadFailed, gvr, ns, err)
-					return
-				}
-				err = downloadObjList(objList, resourceDir, ns)
-				if err != nil {
-					return
-				}
+				taskGroup.SubmitErr(func() error {
+					objList, err := g.dynamicClient.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
+					if err != nil {
+						err = fmt.Errorf("%w: failed to list objects for gvr %q in namespace %q: %w", api.ErrDownloadFailed, gvr, ns, err)
+						return err
+					}
+					err = writeObjectList(objList, resourceDir, ns)
+					if err != nil {
+						cancelFn(err)
+						return err
+					}
+					return nil
+				})
 			}
 		} else {
-			objList, err = g.dynamicClient.Resource(gvr).List(ctx, metav1.ListOptions{})
-			if err != nil {
-				err = fmt.Errorf("%w: failed to list objects for gvr %q: %w", api.ErrDownloadFailed, gvr, err)
-				return
-			}
-			err = downloadObjList(objList, resourceDir, "")
-			if err != nil {
-				return
-			}
+			taskGroup.SubmitErr(func() error {
+				objList, err := g.dynamicClient.Resource(gvr).List(ctx, metav1.ListOptions{})
+				if err != nil {
+					err = fmt.Errorf("%w: failed to list objects for gvr %q: %w", api.ErrDownloadFailed, gvr, err)
+					return err
+				}
+				err = writeObjectList(objList, resourceDir, "")
+				if err != nil {
+					return err
+				}
+				return nil
+			})
 		}
 	}
-	return nil
+	return taskGroup.Wait()
 }
 
 func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir string) (err error) {
@@ -280,7 +283,7 @@ func LoadAndCleanObj(objPath string) (obj *unstructured.Unstructured, err error)
 	return
 }
 
-func downloadObjList(objList *unstructured.UnstructuredList, resourceDir string, ns string) (err error) {
+func writeObjectList(objList *unstructured.UnstructuredList, resourceDir string, ns string) (err error) {
 	var filename string
 	for _, obj := range objList.Items {
 		if ns != "" {

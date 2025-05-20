@@ -14,10 +14,15 @@ type MainOpts struct {
 	ObjDir string
 }
 
-func SetupDownloadFlagsToOpts(downloadFlags *flag.FlagSet, mainOpts *MainOpts) {
-	downloadFlags.StringVarP(&mainOpts.KubeConfigPath, clientcmd.RecommendedConfigPathFlag, "k", os.Getenv(clientcmd.RecommendedConfigPathEnvVar), "kubeconfig path of shoot data plane cluster - defaults to KUBECONFIG env-var")
+func setupCommonFlagsToOpts(flagSet *flag.FlagSet, mainOpts *MainOpts) {
+	flagSet.StringVarP(&mainOpts.KubeConfigPath, clientcmd.RecommendedConfigPathFlag, "k", os.Getenv(clientcmd.RecommendedConfigPathEnvVar), "kubeconfig path of shoot data plane cluster - defaults to KUBECONFIG env-var")
 	//downloadFlags.StringVarP(&mainOpts.ControlKubeConfigPath, "kubeconfig-control", "c", os.Getenv("CONTROL_KUBECONFIG"), "kubeconfig path of shoot control plane (seed kubeconfig) - defaults to CONTROL_KUBECONFIG env-var")
-	downloadFlags.StringVarP(&mainOpts.ObjDir, "download-dir", "d", "", "Base download directory for object YAMLs")
+	flagSet.StringVarP(&mainOpts.ObjDir, "obj-dir", "d", "", "Base directory where object YAML's of cluster were downloaded using 'download' sub-command")
+	flagSet.IntVarP(&mainOpts.PoolSize, "pool-size", "p", 100, "go-routine pool size")
+}
+func SetupDownloadFlagsToOpts(downloadFlags *flag.FlagSet, mainOpts *MainOpts) {
+	setupCommonFlagsToOpts(downloadFlags, mainOpts)
+	//downloadFlags.StringVarP(&mainOpts.ControlKubeConfigPath, "kubeconfig-control", "c", os.Getenv("CONTROL_KUBECONFIG"), "kubeconfig path of shoot control plane (seed kubeconfig) - defaults to CONTROL_KUBECONFIG env-var")
 	standardUsage := downloadFlags.PrintDefaults
 	downloadFlags.Usage = func() {
 		_, _ = fmt.Fprintln(os.Stderr, "Usage: copyshoot download <flags> <GVRs>")
@@ -33,8 +38,7 @@ func SetupDownloadFlagsToOpts(downloadFlags *flag.FlagSet, mainOpts *MainOpts) {
 	}
 }
 func SetupUploadFlagsToOpts(uploadFlags *flag.FlagSet, mainOpts *MainOpts) {
-	uploadFlags.StringVarP(&mainOpts.KubeConfigPath, clientcmd.RecommendedConfigPathFlag, "k", os.Getenv(clientcmd.RecommendedConfigPathEnvVar), "kubeconfig path of shoot data plane cluster - defaults to KUBECONFIG env-var")
-	uploadFlags.StringVarP(&mainOpts.ObjDir, "obj-dir", "d", "", "Base directory where object YAML's of cluster were downloaded using 'download' sub-command")
+	setupCommonFlagsToOpts(uploadFlags, mainOpts)
 	standardUsage := uploadFlags.PrintDefaults
 	uploadFlags.Usage = func() {
 		_, _ = fmt.Fprintln(os.Stderr, "Usage: copyshoot upload <flags>")
@@ -42,8 +46,6 @@ func SetupUploadFlagsToOpts(uploadFlags *flag.FlagSet, mainOpts *MainOpts) {
 		_, _ = fmt.Fprintln(os.Stderr, "<flags>")
 		standardUsage()
 		_, _ = fmt.Fprintln(os.Stderr)
-		//_, _ = fmt.Fprintln(os.Stderr, "<GVRs>: GVRs in format [group/][version/]resource where group and version can be omitted for defaults")
-		//_, _ = fmt.Fprintln(os.Stderr)
 		_, _ = fmt.Fprintln(os.Stderr, "Examples:")
 		_, _ = fmt.Fprintln(os.Stderr, "copyshoot upload -k /tmp/mykubeconfig.yaml -d /tmp/myobjdir")
 	}
