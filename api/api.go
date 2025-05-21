@@ -41,7 +41,8 @@ type CopierConfig struct {
 	// GVRStrings represent list of GVR to download/upload int the form: '[group/][version/]resource. Ex: pods nodes
 	GVRStrings []string
 	//ShootCoords       ShootCoords
-	PoolSize int
+	PoolSize   int
+	OrderKinds bool
 }
 
 // ShootCoords represents the coordinates of a gardner shoot cluster. It can be used to represent both the shoot and seed.

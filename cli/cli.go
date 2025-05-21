@@ -18,7 +18,7 @@ func setupCommonFlagsToOpts(flagSet *flag.FlagSet, mainOpts *MainOpts) {
 	flagSet.StringVarP(&mainOpts.KubeConfigPath, clientcmd.RecommendedConfigPathFlag, "k", os.Getenv(clientcmd.RecommendedConfigPathEnvVar), "kubeconfig path of shoot data plane cluster - defaults to KUBECONFIG env-var")
 	//downloadFlags.StringVarP(&mainOpts.ControlKubeConfigPath, "kubeconfig-control", "c", os.Getenv("CONTROL_KUBECONFIG"), "kubeconfig path of shoot control plane (seed kubeconfig) - defaults to CONTROL_KUBECONFIG env-var")
 	flagSet.StringVarP(&mainOpts.ObjDir, "obj-dir", "d", "", "Base directory where object YAML's of cluster were downloaded using 'download' sub-command")
-	flagSet.IntVarP(&mainOpts.PoolSize, "pool-size", "p", 100, "go-routine pool size")
+	flagSet.IntVarP(&mainOpts.PoolSize, "pool-size", "p", 120, "go-routine pool size") //TODO: solve the connection reset by peer issue when pool size increases
 }
 func SetupDownloadFlagsToOpts(downloadFlags *flag.FlagSet, mainOpts *MainOpts) {
 	setupCommonFlagsToOpts(downloadFlags, mainOpts)
@@ -39,6 +39,7 @@ func SetupDownloadFlagsToOpts(downloadFlags *flag.FlagSet, mainOpts *MainOpts) {
 }
 func SetupUploadFlagsToOpts(uploadFlags *flag.FlagSet, mainOpts *MainOpts) {
 	setupCommonFlagsToOpts(uploadFlags, mainOpts)
+	uploadFlags.BoolVarP(&mainOpts.OrderKinds, "order-kinds", "o", false, "whether to order kinds by priority and wait while uploading")
 	standardUsage := uploadFlags.PrintDefaults
 	uploadFlags.Usage = func() {
 		_, _ = fmt.Fprintln(os.Stderr, "Usage: copyshoot upload <flags>")

@@ -17,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/restmapper"
-	"maps"
 	"os"
 	"path/filepath"
 	"sigs.k8s.io/yaml"
@@ -202,13 +201,26 @@ func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir stri
 	}
 	slog.Info("Number of upload groups: ", "#uploadGrouos", len(uploadGroups))
 	uploadCount := &atomic.Uint32{}
+
+	//TODO: remove repetition and improve
 	for _, ug := range uploadGroups {
-		err = ug.UploadAndWait(uploadCount)
-		if err != nil {
-			return
+		ug.UploadAsync(uploadCount)
+		if g.cfg.OrderKinds {
+			err := ug.TaskGroup.Wait()
+			if err != nil {
+				return fmt.Errorf("%w: failed to upload task group for GVR %q: %w", api.ErrUploadFailed, ug.GVR, err)
+			}
 		}
 	}
-	end := time.Now()
+	var end time.Time
+	for _, ug := range uploadGroups {
+		err := ug.TaskGroup.Wait()
+		if err != nil {
+			return fmt.Errorf("%w: failed to upload task group for GVR %q: %w", api.ErrUploadFailed, ug.GVR, err)
+		}
+		end = time.Now()
+		slog.Info("Finished UploadGroup", "kind", ug.GVK.Kind, "kindCount", len(ug.Objects), "uploadCount", uploadCount.Load())
+	}
 	slog.Info("UploadObjects time taken", "duration", end.Sub(begin), "totalUploadCount", uploadCount.Load())
 	return
 }
@@ -219,39 +231,43 @@ type UploadGroup struct {
 	GVR            schema.GroupVersionResource
 	Namespace      string
 	TaskGroup      pond.TaskGroup
-	ResourceFacade dynamic.ResourceInterface
+	ResourceFacade dynamic.NamespaceableResourceInterface
+	OrderKinds     bool
 	Objects        []*unstructured.Unstructured
 }
 
-func (u *UploadGroup) UploadAndWait(uploadCount *atomic.Uint32) error {
-	slog.Info("Commencing UploadGroup", "kind", u.GVK.Kind)
-	for _, obj := range u.Objects {
+func (u *UploadGroup) UploadAsync(uploadCount *atomic.Uint32) {
+	slog.Debug("Commencing UploadGroup", "kind", u.GVK.Kind)
+	for _, o := range u.Objects {
+		obj := o
 		u.TaskGroup.SubmitErr(func() error {
-			_, err := u.ResourceFacade.Create(u.Ctx, obj, metav1.CreateOptions{})
+			var ri dynamic.ResourceInterface = u.ResourceFacade
+			if obj.GetNamespace() != "" {
+				ri = u.ResourceFacade.Namespace(obj.GetNamespace())
+			}
+			createdObj, err := ri.Create(u.Ctx, obj, metav1.CreateOptions{})
 			if err != nil {
 				if errors.IsAlreadyExists(err) {
-					slog.Warn("object already exists, skipping upload", "name", obj.GetName(), "namespace", obj.GetNamespace())
+					slog.Warn("object already exists, skipping upload.", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+					return nil
+				}
+				if errors.IsForbidden(err) {
+					slog.Warn("object creation forbidden.", "name", obj.GetName(), "namespace", obj.GetNamespace(), "error", err)
 					return nil
 				}
 				err = fmt.Errorf("failed to create obj of kind %q, name %q and namespace %q: %w",
 					obj.GetKind(), obj.GetName(), obj.GetNamespace(), err)
 				return err
 			}
-			if uploadCount.Load()%2000 == 0 {
-				slog.Info("object created", "uploadCount", uploadCount.Load(), "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+			if uploadCount.Load()%3000 == 0 {
+				slog.Info("object created", "uploadCount", uploadCount.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
 			} else {
-				slog.Debug("object created", "uploadCount", uploadCount.Load(), "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+				slog.Debug("object created", "uploadCount", uploadCount.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
 			}
 			uploadCount.Add(1)
 			return nil
 		})
 	}
-	err := u.TaskGroup.Wait()
-	if err != nil {
-		return fmt.Errorf("%w: failed to upload task group for GVR %q: %w", api.ErrUploadFailed, u.GVR, err)
-	}
-	slog.Info("Finished UploadGroup", "kind", u.GVK.Kind, "kindCount", len(u.Objects), "uploadCount", uploadCount.Load())
-	return nil
 }
 
 // createUploadTaskGroups creates a map of Kind to UploadGroup for objects of that kind
@@ -261,10 +277,9 @@ func createUploadTaskGroups(ctx context.Context, dynamicClient dynamic.Interface
 	uploadGroups = make([]UploadGroup, numKinds)
 
 	var kindIndex = -1
-	var restMapping *meta.RESTMapping
-	var resourceFacade dynamic.ResourceInterface
 
 	for _, obj := range objs {
+
 		kind := obj.GetKind()
 		ns := obj.GetNamespace()
 		gvk := obj.GroupVersionKind()
@@ -273,8 +288,11 @@ func createUploadTaskGroups(ctx context.Context, dynamicClient dynamic.Interface
 			uploadGroups[kindIndex].Objects = append(uploadGroups[kindIndex].Objects, obj)
 			continue
 		}
+
 		kindIndex++
 
+		var restMapping *meta.RESTMapping
+		var resourceFacade dynamic.NamespaceableResourceInterface
 		restMapping, err = restMap.RESTMapping(gvk.GroupKind(), gvk.Version)
 		if err != nil {
 			err = fmt.Errorf("%w: failed to fetch REST mapping for %q: %w", api.ErrDiscovery, gvk, err)
@@ -282,12 +300,7 @@ func createUploadTaskGroups(ctx context.Context, dynamicClient dynamic.Interface
 		}
 
 		gvr := restMapping.Resource
-		if obj.GetNamespace() != "" {
-			resourceFacade = dynamicClient.Resource(gvr).Namespace(obj.GetNamespace())
-		} else {
-			resourceFacade = dynamicClient.Resource(gvr)
-		}
-
+		resourceFacade = dynamicClient.Resource(gvr)
 		uploadGroups[kindIndex] = UploadGroup{
 			Ctx:            ctx,
 			GVK:            gvk,
@@ -301,18 +314,12 @@ func createUploadTaskGroups(ctx context.Context, dynamicClient dynamic.Interface
 	return
 }
 
-func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) (objs []*unstructured.Unstructured, err error) {
+func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) ([]*unstructured.Unstructured, error) {
 	slog.Info("Loading objects.", "baseObjDir", baseObjDir)
-	//entries, err := os.ReadDir(baseObjDir)
-	//if err != nil {
-	//	err = fmt.Errorf("%w: %w", api.ErrUploadFailed, err)
-	//	return
-	//}
-
-	var obj *unstructured.Unstructured
 	objCount := 0
 	var loadMutex sync.Mutex
-	err = filepath.WalkDir(baseObjDir, func(path string, e fs.DirEntry, err error) error {
+	var objs []*unstructured.Unstructured
+	err := filepath.WalkDir(baseObjDir, func(path string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("%w: path error for %q: %w", api.ErrLoadObj, path, err)
 		}
@@ -327,7 +334,8 @@ func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) (objs []*unstr
 			return err
 		}
 		loadTaskGroup.SubmitErr(func() error {
-			obj, err = LoadAndCleanObj(path)
+			var obj *unstructured.Unstructured
+			obj, err := LoadAndCleanObj(path)
 			if err != nil {
 				return err
 			}
@@ -346,31 +354,10 @@ func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) (objs []*unstr
 	})
 	err = loadTaskGroup.Wait()
 	if err != nil {
-		return
+		return nil, err
 	}
 	slog.Info("Loaded total objects", "objCount", objCount, "baseObjDir", baseObjDir)
-
-	//for _, resourcesDirName := range entries {
-	//	if !resourcesDirName.IsDir() {
-	//		continue
-	//	}
-	//	parts := strings.SplitN(resourcesDirName.Name(), "-", 3)
-	//	if len(parts) != 3 {
-	//		err = fmt.Errorf("%w: invalid object resourcesDirName: %s", api.ErrUploadFailed, resourcesDirName.Name())
-	//		return
-	//	}
-	//	resourceDirPath := filepath.Join(baseObjDir, resourcesDirName.Name())
-	//	files, _ := os.ReadDir(resourceDirPath)
-	//	for _, f := range files {
-	//		objPath := filepath.Join(resourceDirPath, f.Name())
-	//		obj, err = LoadAndCleanObj(objPath)
-	//		if err != nil {
-	//			return
-	//		}
-	//		objs = append(objs, obj)
-	//	}
-	//}
-	return
+	return objs, nil
 }
 
 func LoadAndCleanObj(objPath string) (obj *unstructured.Unstructured, err error) {
@@ -553,14 +540,6 @@ func sortByKind(objs []*unstructured.Unstructured) {
 		kj := KindToPriority[objs[j].GetKind()]
 		return ki < kj
 	})
-}
-
-func createPriorityToKind(kindToPriority map[string]int) []string {
-	kinds := slices.Collect(maps.Keys(kindToPriority))
-	slices.SortFunc(kinds, func(a, b string) int {
-		return kindToPriority[a] - kindToPriority[b]
-	})
-	return kinds
 }
 
 func sortObjsByPriority(objs []*unstructured.Unstructured) {
