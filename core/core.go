@@ -24,6 +24,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	//"github.com/mitchellh/go-homedir"
@@ -173,7 +174,7 @@ func (g *GardenerShootCopier) DownloadObjects(ctx context.Context, baseObjDir st
 }
 
 func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir string) (err error) {
-	objs, err := loadObjects(baseObjDir)
+	objs, err := loadObjects(baseObjDir, g.pool.NewGroupContext(ctx))
 	if err != nil {
 		err = fmt.Errorf("%w: failed to load objects: %w", api.ErrUploadFailed, err)
 		return
@@ -287,15 +288,17 @@ func createUploadTaskGroups(ctx context.Context, dynamicClient dynamic.Interface
 	return
 }
 
-func loadObjects(baseObjDir string) (objs []*unstructured.Unstructured, err error) {
+func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) (objs []*unstructured.Unstructured, err error) {
 	slog.Info("Loading objects.", "baseObjDir", baseObjDir)
 	//entries, err := os.ReadDir(baseObjDir)
 	//if err != nil {
 	//	err = fmt.Errorf("%w: %w", api.ErrUploadFailed, err)
 	//	return
 	//}
+
 	var obj *unstructured.Unstructured
 	count := 0
+	var loadMutex sync.Mutex
 	err = filepath.WalkDir(baseObjDir, func(path string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("%w: path error for %q: %w", api.ErrLoadObj, path, err)
@@ -310,19 +313,28 @@ func loadObjects(baseObjDir string) (objs []*unstructured.Unstructured, err erro
 			err = fmt.Errorf("%w: invalid object resourcesDirName: %s", api.ErrLoadObj, resourcesDirName)
 			return err
 		}
-		obj, err = LoadAndCleanObj(path)
-		if err != nil {
-			return err
-		}
-		objs = append(objs, obj)
-		count++
-		if count%1000 == 0 {
-			slog.Info("Loaded object", "count", count, "path", path)
-		} else {
-			slog.Debug("Loaded object", "count", count, "path", path)
-		}
+		loadTaskGroup.SubmitErr(func() error {
+			obj, err = LoadAndCleanObj(path)
+			if err != nil {
+				return err
+			}
+			loadMutex.Lock()
+			defer loadMutex.Unlock()
+			objs = append(objs, obj)
+			count++
+			if count%2000 == 0 {
+				slog.Info("Loaded object", "count", count, "path", path)
+			} else {
+				slog.Debug("Loaded object", "count", count, "path", path)
+			}
+			return nil
+		})
 		return nil
 	})
+	err = loadTaskGroup.Wait()
+	if err != nil {
+		return
+	}
 	slog.Info("Loaded total objects", "count", count, "baseObjDir", baseObjDir)
 
 	//for _, resourcesDirName := range entries {
@@ -366,13 +378,29 @@ func LoadAndCleanObj(objPath string) (obj *unstructured.Unstructured, err error)
 		err = fmt.Errorf("%w: failed to unmarshal object in %q: %w", api.ErrLoadObj, objPath, err)
 		return
 	}
-	obj.SetResourceVersion("")
-	obj.SetCreationTimestamp(metav1.Time{})
-	obj.SetUID("")
-	//obj.SetManagedFields(nil)
-	obj.SetGeneration(0)
+	unstructured.RemoveNestedField(obj.Object, "metadata", "resourceVersion")
+	unstructured.RemoveNestedField(obj.Object, "metadata", "uid")
+	unstructured.RemoveNestedField(obj.Object, "metadata", "generation")
+	obj.SetManagedFields(nil)
 	//unstructured.RemoveNestedField(obj.Object, "status")
+	obj.SetGeneration(0)
 
+	if obj.GetKind() != "Pod" {
+		return
+	}
+	//TODO: Make this configurable via flag
+
+	// Check if spec.nodeName exists
+	_, found, err := unstructured.NestedString(obj.Object, "spec", "nodeName")
+	if err != nil {
+		err = fmt.Errorf("%w: error checking spec.nodeName for pod %q: %w", api.ErrLoadObj, obj.GetName(), err)
+		return
+	}
+	if !found {
+		// NodeName not set, no action needed
+		return
+	}
+	unstructured.RemoveNestedField(obj.Object, "spec", "nodeName")
 	return
 }
 
