@@ -59,18 +59,24 @@ var (
 		storagev1.AddToScheme,
 	}
 	SupportedScheme = CreateRegisterScheme()
-	KindToPriority  = map[string]int{
-		"CustomResourceDefinition": 0,
-		"PriorityClass":            1,
-		"Namespace":                2,
-		"ServiceAccount":           3,
-		"Secret":                   4,
-		"ConfigMap":                5,
-		"PersistentVolume":         6,
-		"PersistentVolumeClaim":    7,
-		"Deployment":               8,
-		"StatefulSet":              8,
-		"Pod":                      10,
+
+	// KindToPriority TODO: needs to be fixed to support same priority for diff Kinds
+	KindToPriority = map[string]int{
+		//"CustomResourceDefinition": 0,
+		"Namespace":             1,
+		"PriorityClass":         2,
+		"CSIDriver":             3,
+		"StorageClass":          4,
+		"ServiceAccount":        5,
+		"ConfigMap":             6,
+		"PersistentVolume":      7,
+		"PersistentVolumeClaim": 8,
+		"Deployment":            9,
+		"StatefulSet":           10,
+		"ReplicaSet":            11,
+		"Node":                  12,
+		"CSINode":               13,
+		"Pod":                   14,
 	}
 )
 
@@ -390,17 +396,16 @@ func LoadAndCleanObj(objPath string) (obj *unstructured.Unstructured, err error)
 	}
 	//TODO: Make this configurable via flag
 
-	// Check if spec.nodeName exists
-	_, found, err := unstructured.NestedString(obj.Object, "spec", "nodeName")
+	err = unstructured.SetNestedField(obj.Object, "", "spec", "nodeName")
 	if err != nil {
-		err = fmt.Errorf("%w: error checking spec.nodeName for pod %q: %w", api.ErrLoadObj, obj.GetName(), err)
+		err = fmt.Errorf("%w: cannot clear spec.nodeName for pod %q: %w", api.ErrLoadObj, obj.GetName(), err)
 		return
 	}
-	if !found {
-		// NodeName not set, no action needed
+	err = unstructured.SetNestedField(obj.Object, "default-scheduler", "spec", "schedulerName")
+	if err != nil {
+		err = fmt.Errorf("%w: cannot set default-scheduler for pod %q: %w", api.ErrLoadObj, obj.GetName(), err)
 		return
 	}
-	unstructured.RemoveNestedField(obj.Object, "spec", "nodeName")
 	return
 }
 

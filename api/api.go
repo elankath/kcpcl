@@ -11,7 +11,21 @@ import (
 
 var (
 	ProgramName = "copyshoot"
-	DefaultGVRs = []string{"namespaces", "nodes", "configmaps", "scheduling.k8s.io/v1/priorityclasses", "persistentvolumeclaims", "persistentvolumes", "pods"}
+	DefaultGVRs = []string{
+		"namespaces",
+		"scheduling.k8s.io/v1/priorityclasses",
+		"storage.k8s.io/v1/csidrivers",
+		"storage.k8s.io/v1/storageclasses",
+		"serviceaccounts",
+		"configmaps",
+		"persistentvolumes",
+		"persistentvolumeclaims",
+		"apps/v1/deployments",
+		"apps/v1/statefulsets",
+		"apps/v1/replicasets",
+		"nodes",
+		"storage.k8s.io/v1/csinodes",
+		"pods"}
 )
 
 // CopierConfig represents input configuration for creating and initializing a ShootCopier
