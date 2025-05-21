@@ -4,7 +4,6 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -13,12 +12,8 @@ func CreateKubeClient(kubeConfigPath string, poolSize int) (*kubernetes.Clientse
 	if err != nil {
 		return nil, err
 	}
-	if float32(poolSize) > 2*rest.DefaultQPS {
-		clientConfig.QPS = float32(poolSize / 2)
-	}
-	if poolSize > 2*rest.DefaultBurst {
-		clientConfig.Burst = poolSize / 2
-	}
+	clientConfig.QPS = -1 //float32(2 * poolSize)
+	clientConfig.Burst = 2 * poolSize
 	clientSet, err := kubernetes.NewForConfig(clientConfig)
 	if err != nil {
 		return nil, err
@@ -31,12 +26,8 @@ func CreateDynamicAndDiscoveryClients(kubeConfigPath string, poolSize int) (dyna
 	if err != nil {
 		return nil, nil, err
 	}
-	if float32(poolSize) > 2*rest.DefaultQPS {
-		config.QPS = float32(poolSize / 2)
-	}
-	if poolSize > 2*rest.DefaultBurst {
-		config.Burst = poolSize / 2
-	}
+	config.QPS = float32(poolSize * 2)
+	config.Burst = poolSize * 2
 	dyn, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return nil, nil, err

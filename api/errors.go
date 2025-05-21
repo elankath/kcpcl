@@ -25,5 +25,6 @@ var (
 	ErrDiscovery      = errors.New("cannot discover resources")
 	ErrDownloadFailed = errors.New("download failed")
 
+	ErrLoadObj      = errors.New("cannot load object")
 	ErrUploadFailed = errors.New("upload failed")
 )
