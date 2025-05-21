@@ -3,6 +3,7 @@ module github.com/elankath/copyshoot
 go 1.24.1
 
 require (
+	github.com/alitto/pond/v2 v2.3.4
 	github.com/gardener/gardener v1.119.0
 	github.com/spf13/afero v1.14.0
 	github.com/spf13/pflag v1.0.6
@@ -13,7 +14,6 @@ require (
 )
 
 require (
-	github.com/alitto/pond/v2 v2.3.4 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/fxamacker/cbor/v2 v2.8.0 // indirect
