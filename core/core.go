@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	//"github.com/mitchellh/go-homedir"
 	appsv1 "k8s.io/api/apps/v1"
@@ -60,23 +61,25 @@ var (
 	}
 	SupportedScheme = CreateRegisterScheme()
 
-	// KindToPriority TODO: needs to be fixed to support same priority for diff Kinds
+	// KindToPriority TODO: stupid and very dirty. needs to be fixed to support same priority for diff Kinds
 	KindToPriority = map[string]int{
 		//"CustomResourceDefinition": 0,
 		"Namespace":             1,
 		"PriorityClass":         2,
 		"CSIDriver":             3,
-		"StorageClass":          4,
-		"ServiceAccount":        5,
-		"ConfigMap":             6,
-		"PersistentVolume":      7,
-		"PersistentVolumeClaim": 8,
-		"Deployment":            9,
-		"StatefulSet":           10,
-		"ReplicaSet":            11,
-		"Node":                  12,
-		"CSINode":               13,
-		"Pod":                   14,
+		"CSIStorageCapacity":    4,
+		"StorageClass":          5,
+		"ServiceAccount":        6,
+		"ConfigMap":             7,
+		"PersistentVolume":      8,
+		"PersistentVolumeClaim": 9,
+		"VolumeAttachment":      10,
+		"Deployment":            11,
+		"StatefulSet":           12,
+		"ReplicaSet":            13,
+		"Node":                  14,
+		"CSINode":               15,
+		"Pod":                   16,
 	}
 )
 
@@ -180,6 +183,7 @@ func (g *GardenerShootCopier) DownloadObjects(ctx context.Context, baseObjDir st
 }
 
 func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir string) (err error) {
+	begin := time.Now()
 	objs, err := loadObjects(baseObjDir, g.pool.NewGroupContext(ctx))
 	if err != nil {
 		err = fmt.Errorf("%w: failed to load objects: %w", api.ErrUploadFailed, err)
@@ -196,6 +200,7 @@ func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir stri
 		err = fmt.Errorf("%w: failed to create upload task groups: %w", api.ErrUploadFailed, err)
 		return
 	}
+	slog.Info("Number of upload groups: ", "#uploadGrouos", len(uploadGroups))
 	uploadCount := &atomic.Uint32{}
 	for _, ug := range uploadGroups {
 		err = ug.UploadAndWait(uploadCount)
@@ -203,6 +208,8 @@ func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir stri
 			return
 		}
 	}
+	end := time.Now()
+	slog.Info("UploadObjects time taken", "duration", end.Sub(begin), "totalUploadCount", uploadCount.Load())
 	return
 }
 
@@ -385,8 +392,8 @@ func LoadAndCleanObj(objPath string) (obj *unstructured.Unstructured, err error)
 		return
 	}
 	unstructured.RemoveNestedField(obj.Object, "metadata", "resourceVersion")
-	unstructured.RemoveNestedField(obj.Object, "metadata", "uid")
-	unstructured.RemoveNestedField(obj.Object, "metadata", "generation")
+	//unstructured.RemoveNestedField(obj.Object, "metadata", "uid")
+	//unstructured.RemoveNestedField(obj.Object, "metadata", "generation")
 	obj.SetManagedFields(nil)
 	//unstructured.RemoveNestedField(obj.Object, "status")
 	obj.SetGeneration(0)
