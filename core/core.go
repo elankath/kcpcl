@@ -223,7 +223,7 @@ type UploadGroup struct {
 	Objects        []*unstructured.Unstructured
 }
 
-func (u *UploadGroup) UploadAndWait(count *atomic.Uint32) error {
+func (u *UploadGroup) UploadAndWait(uploadCount *atomic.Uint32) error {
 	slog.Info("Commencing UploadGroup", "kind", u.GVK.Kind)
 	for _, obj := range u.Objects {
 		u.TaskGroup.SubmitErr(func() error {
@@ -237,12 +237,12 @@ func (u *UploadGroup) UploadAndWait(count *atomic.Uint32) error {
 					obj.GetKind(), obj.GetName(), obj.GetNamespace(), err)
 				return err
 			}
-			if count.Load()%2000 == 0 {
-				slog.Info("object created", "count", count.Load(), "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+			if uploadCount.Load()%2000 == 0 {
+				slog.Info("object created", "uploadCount", uploadCount.Load(), "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
 			} else {
-				slog.Debug("object created", "count", count.Load(), "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+				slog.Debug("object created", "uploadCount", uploadCount.Load(), "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
 			}
-			count.Add(1)
+			uploadCount.Add(1)
 			return nil
 		})
 	}
@@ -250,7 +250,7 @@ func (u *UploadGroup) UploadAndWait(count *atomic.Uint32) error {
 	if err != nil {
 		return fmt.Errorf("%w: failed to upload task group for GVR %q: %w", api.ErrUploadFailed, u.GVR, err)
 	}
-	slog.Info("Finished UploadGroup", "kind", u.GVK.Kind)
+	slog.Info("Finished UploadGroup", "kind", u.GVK.Kind, "kindCount", len(u.Objects), "uploadCount", uploadCount.Load())
 	return nil
 }
 
@@ -310,7 +310,7 @@ func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) (objs []*unstr
 	//}
 
 	var obj *unstructured.Unstructured
-	count := 0
+	objCount := 0
 	var loadMutex sync.Mutex
 	err = filepath.WalkDir(baseObjDir, func(path string, e fs.DirEntry, err error) error {
 		if err != nil {
@@ -334,11 +334,11 @@ func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) (objs []*unstr
 			loadMutex.Lock()
 			defer loadMutex.Unlock()
 			objs = append(objs, obj)
-			count++
-			if count%2000 == 0 {
-				slog.Info("Loaded object", "count", count, "path", path)
+			objCount++
+			if objCount%2000 == 0 {
+				slog.Info("Loaded object", "objCount", objCount, "path", path)
 			} else {
-				slog.Debug("Loaded object", "count", count, "path", path)
+				slog.Debug("Loaded object", "objCount", objCount, "path", path)
 			}
 			return nil
 		})
@@ -348,7 +348,7 @@ func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) (objs []*unstr
 	if err != nil {
 		return
 	}
-	slog.Info("Loaded total objects", "count", count, "baseObjDir", baseObjDir)
+	slog.Info("Loaded total objects", "objCount", objCount, "baseObjDir", baseObjDir)
 
 	//for _, resourcesDirName := range entries {
 	//	if !resourcesDirName.IsDir() {
@@ -420,7 +420,7 @@ func writeObjectList(objList *unstructured.UnstructuredList, resourceDir string,
 	var filename string
 	for _, obj := range objList.Items {
 		if ns != "" {
-			filename = filepath.Join(resourceDir, sanitizeFileName(ns+"-"+obj.GetName())+".yaml")
+			filename = filepath.Join(resourceDir, sanitizeFileName(ns+"@"+obj.GetName())+".yaml")
 		} else {
 			filename = filepath.Join(resourceDir, sanitizeFileName(obj.GetName())+".yaml")
 		}
@@ -521,7 +521,7 @@ func isNamespacedResource(apiGroupResources []*restmapper.APIGroupResources, gvr
 }
 
 func sanitizeFileName(name string) string {
-	return strings.ReplaceAll(name, "/", "_")
+	return strings.ReplaceAll(name, "/", "__")
 }
 
 func writeYAMLFile(path string, obj *unstructured.Unstructured) error {
