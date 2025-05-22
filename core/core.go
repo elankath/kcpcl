@@ -199,7 +199,7 @@ func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir stri
 		err = fmt.Errorf("%w: failed to create upload task groups: %w", api.ErrUploadFailed, err)
 		return
 	}
-	slog.Info("Number of upload groups: ", "#uploadGrouos", len(uploadGroups))
+	slog.Info("Upload groups.", "numUploadGroups", len(uploadGroups))
 	uploadCount := &atomic.Uint32{}
 
 	//TODO: remove repetition and improve

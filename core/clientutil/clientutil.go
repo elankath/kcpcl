@@ -8,13 +8,14 @@ import (
 )
 
 func CreateKubeClient(kubeConfigPath string, poolSize int) (*kubernetes.Clientset, error) {
-	clientConfig, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	clientConfig.QPS = float32(poolSize)
-	clientConfig.Burst = poolSize
-	clientSet, err := kubernetes.NewForConfig(clientConfig)
+	restCfg.QPS = float32(poolSize)
+	restCfg.QPS = float32(poolSize) * 1.5
+	restCfg.Burst = poolSize
+	clientSet, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -22,17 +23,17 @@ func CreateKubeClient(kubeConfigPath string, poolSize int) (*kubernetes.Clientse
 }
 
 func CreateDynamicAndDiscoveryClients(kubeConfigPath string, poolSize int) (dynamic.Interface, *discovery.DiscoveryClient, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	config.QPS = float32(poolSize)
-	config.Burst = poolSize
-	dyn, err := dynamic.NewForConfig(config)
+	restCfg.QPS = float32(poolSize) * 1.5
+	restCfg.Burst = poolSize
+	dyn, err := dynamic.NewForConfig(restCfg)
 	if err != nil {
 		return nil, nil, err
 	}
-	disc, err := discovery.NewDiscoveryClientForConfig(config)
+	disc, err := discovery.NewDiscoveryClientForConfig(restCfg)
 	if err != nil {
 		return nil, nil, err
 	}
