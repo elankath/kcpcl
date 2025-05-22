@@ -1,4 +1,4 @@
-module github.com/elankath/copyshoot
+module github.com/elankath/kcpcl
 
 go 1.24.1
 

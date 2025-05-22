@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	ProgramName = "copyshoot"
+	ProgramName = "kcpcl"
 	DefaultGVRs = []string{
 		"namespaces",
 		"scheduling.k8s.io/v1/priorityclasses",
@@ -40,7 +40,7 @@ type CopierConfig struct {
 
 	// GVRStrings represent list of GVR to download/upload int the form: '[group/][version/]resource. Ex: pods nodes
 	GVRStrings []string
-	//ShootCoords       ShootCoords
+
 	PoolSize   int
 	OrderKinds bool
 }

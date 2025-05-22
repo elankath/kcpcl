@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
-	"github.com/elankath/copyshoot/api"
+	"github.com/elankath/kcpcl/api"
 	"log/slog"
 	"os"
 	"text/template"

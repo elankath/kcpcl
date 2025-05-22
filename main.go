@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/elankath/copyshoot/api"
-	"github.com/elankath/copyshoot/cli"
-	"github.com/elankath/copyshoot/core"
+	"github.com/elankath/kcpcl/api"
+	"github.com/elankath/kcpcl/cli"
+	"github.com/elankath/kcpcl/core"
 	flag "github.com/spf13/pflag"
 	"log/slog"
 	"os"
@@ -89,6 +89,7 @@ func ExecDownload(ctx context.Context, subCommandFlags *flag.FlagSet, args []str
 		if errors.Is(err, api.ErrCreateKubeClient) {
 			exitCode = cli.ExitKubeClientCreate
 		}
+		return
 	}
 
 	gvrs := subCommandFlags.Args()

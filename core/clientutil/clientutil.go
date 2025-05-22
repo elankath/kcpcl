@@ -26,7 +26,7 @@ func CreateDynamicAndDiscoveryClients(kubeConfigPath string, poolSize int) (dyna
 	if err != nil {
 		return nil, nil, err
 	}
-	config.QPS = float32(poolSize * 2)
+	config.QPS = float32(poolSize)
 	config.Burst = poolSize
 	dyn, err := dynamic.NewForConfig(config)
 	if err != nil {
