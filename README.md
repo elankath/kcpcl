@@ -1,5 +1,7 @@
-# copyshoot
-CLI tool that supports download and upload operations which download objects from a Gardener shoot cluster into an object directory and upload objects from that directory into a target k8s cluster. This is primarily meant to load a "test" cluster with "real" world cluster data with minimal latency.
+# kcpcl
+CLI tool and consumable library that supports download and upload operations which download objects from a k8s cluster into a local directory and upload objects from that local directory into a target k8s cluster. 
+
+Useful to load  "test" clusters with "real" world cluster objects with minimal latency.
 
 
 ## Usage
