@@ -20,7 +20,6 @@ func setupCommonFlagsToOpts(flagSet *flag.FlagSet, mainOpts *MainOpts) {
 	//downloadFlags.StringVarP(&mainOpts.ControlKubeConfigPath, "kubeconfig-control", "c", os.Getenv("CONTROL_KUBECONFIG"), "kubeconfig path of shoot control plane (seed kubeconfig) - defaults to CONTROL_KUBECONFIG env-var")
 	flagSet.StringVarP(&mainOpts.ObjDir, "obj-dir", "d", "", "Base directory where object YAML's of cluster were downloaded using 'download' sub-command")
 	flagSet.IntVarP(&mainOpts.PoolSize, "pool-size", "p", 130, "go-routine pool size") //TODO: solve the connection reset by peer issue when pool size increases
-	flagSet.StringVarP(&mainOpts.KubeSchedulerConfigPath, "scheduler-config", "s", "/tmp/kube-scheduler-config.yaml", "kube-scheduler config path")
 }
 func SetupDownloadFlagsToOpts(downloadFlags *flag.FlagSet, mainOpts *MainOpts) {
 	setupCommonFlagsToOpts(downloadFlags, mainOpts)
@@ -41,6 +40,7 @@ func SetupDownloadFlagsToOpts(downloadFlags *flag.FlagSet, mainOpts *MainOpts) {
 }
 func SetupUploadFlagsToOpts(uploadFlags *flag.FlagSet, mainOpts *MainOpts) {
 	setupCommonFlagsToOpts(uploadFlags, mainOpts)
+	uploadFlags.StringVarP(&mainOpts.KubeSchedulerConfigPath, "scheduler-config", "s", "/tmp/kube-scheduler-config.yaml", "kube-scheduler config path")
 	uploadFlags.BoolVarP(&mainOpts.OrderKinds, "order-kinds", "o", false, "whether to order kinds by priority and wait while uploading")
 	standardUsage := uploadFlags.PrintDefaults
 	uploadFlags.Usage = func() {
