@@ -22,9 +22,11 @@ var (
 	ErrCreateKubeClient          = errors.New("failed create kube client")
 	ErrCreateGardenClient        = errors.New("failed create garden client")
 
-	ErrDiscovery      = errors.New("cannot discover resources")
-	ErrDownloadFailed = errors.New("download failed")
+	ErrDiscovery = errors.New("cannot discover resources")
 
-	ErrLoadObj      = errors.New("cannot load object")
-	ErrUploadFailed = errors.New("upload failed")
+	ErrLoadObj        = errors.New("cannot load object")
+	ErrLoadTemplate   = errors.New("cannot load template")
+	ErrExecTemplate   = errors.New("cannot execute template")
+	ErrUploadFailed   = errors.New("upload failed")
+	ErrDownloadFailed = errors.New("download failed")
 )

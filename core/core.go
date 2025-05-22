@@ -395,11 +395,12 @@ func LoadAndCleanObj(objPath string) (obj *unstructured.Unstructured, err error)
 		err = fmt.Errorf("%w: cannot clear spec.nodeName for pod %q: %w", api.ErrLoadObj, obj.GetName(), err)
 		return
 	}
-	err = unstructured.SetNestedField(obj.Object, "default-scheduler", "spec", "schedulerName")
-	if err != nil {
-		err = fmt.Errorf("%w: cannot set default-scheduler for pod %q: %w", api.ErrLoadObj, obj.GetName(), err)
-		return
-	}
+	// TODO: make an option to set the scheduler name
+	//err = unstructured.SetNestedField(obj.Object, "default-scheduler", "spec", "schedulerName")
+	//if err != nil {
+	//	err = fmt.Errorf("%w: cannot set default-scheduler for pod %q: %w", api.ErrLoadObj, obj.GetName(), err)
+	//	return
+	//}
 	return
 }
 

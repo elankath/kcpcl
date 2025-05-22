@@ -138,6 +138,14 @@ func ExecUpload(ctx context.Context, subCommandFlags *flag.FlagSet, args []strin
 		}
 		return
 	}
+	err = core.GenKubeSchedulerConfiguration(mainOpts.KubeSchedulerConfigPath, mainOpts.KubeConfigPath, mainOpts.PoolSize)
+	if err != nil {
+		return
+	}
+	//err = core.GenerateSchedulerProfile(mainOpts.KubeConfigPath, "/tmp/-ksched-config.yaml")
+	//if err != nil {
+	//	return
+	//}
 	return
 }
 func NewShootCopierFromOpts(opts cli.MainOpts) (copier api.ShootCopier, err error) {

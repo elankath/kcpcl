@@ -12,8 +12,8 @@ func CreateKubeClient(kubeConfigPath string, poolSize int) (*kubernetes.Clientse
 	if err != nil {
 		return nil, err
 	}
-	clientConfig.QPS = -1 //float32(2 * poolSize)
-	clientConfig.Burst = 2 * poolSize
+	clientConfig.QPS = float32(poolSize)
+	clientConfig.Burst = poolSize
 	clientSet, err := kubernetes.NewForConfig(clientConfig)
 	if err != nil {
 		return nil, err
@@ -27,7 +27,7 @@ func CreateDynamicAndDiscoveryClients(kubeConfigPath string, poolSize int) (dyna
 		return nil, nil, err
 	}
 	config.QPS = float32(poolSize * 2)
-	config.Burst = poolSize * 2
+	config.Burst = poolSize
 	dyn, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return nil, nil, err
