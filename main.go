@@ -110,6 +110,10 @@ func ExecDownload(ctx context.Context, subCommandFlags *flag.FlagSet, args []str
 		}
 		return
 	}
+	err = core.GenKubeSchedulerConfiguration(mainOpts.KubeSchedulerConfigPath, mainOpts.KubeConfigPath, mainOpts.PoolSize)
+	if err != nil {
+		return
+	}
 	return
 }
 func ExecUpload(ctx context.Context, subCommandFlags *flag.FlagSet, args []string) (exitCode int, err error) {
