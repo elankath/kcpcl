@@ -41,7 +41,7 @@ func SetupDownloadFlagsToOpts(downloadFlags *flag.FlagSet, mainOpts *MainOpts) {
 func SetupUploadFlagsToOpts(uploadFlags *flag.FlagSet, mainOpts *MainOpts) {
 	setupCommonFlagsToOpts(uploadFlags, mainOpts)
 	uploadFlags.StringVarP(&mainOpts.KubeSchedulerConfigPath, "scheduler-config", "s", "/tmp/kube-scheduler-config.yaml", "kube-scheduler config path")
-	uploadFlags.BoolVarP(&mainOpts.OrderKinds, "order-kinds", "o", false, "whether to order kinds by priority and wait while uploading")
+	uploadFlags.BoolVarP(&mainOpts.OrderKinds, "order-kinds", "o", true, "whether to order kinds by priority and wait while uploading")
 	standardUsage := uploadFlags.PrintDefaults
 	uploadFlags.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s upload <flags>\n", api.ProgramName)
