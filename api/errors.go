@@ -24,9 +24,11 @@ var (
 
 	ErrDiscovery = errors.New("cannot discover resources")
 
-	ErrLoadObj        = errors.New("cannot load object")
-	ErrLoadTemplate   = errors.New("cannot load template")
-	ErrExecTemplate   = errors.New("cannot execute template")
-	ErrUploadFailed   = errors.New("upload failed")
+	ErrLoadObj      = errors.New("cannot load object")
+	ErrLoadTemplate = errors.New("cannot load template")
+	ErrExecTemplate = errors.New("cannot execute template")
+	ErrUploadFailed = errors.New("upload failed")
+
+	ErrSaveObj        = errors.New("cannot save object")
 	ErrDownloadFailed = errors.New("download failed")
 )

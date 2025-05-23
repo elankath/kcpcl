@@ -19,7 +19,7 @@ func setupCommonFlagsToOpts(flagSet *flag.FlagSet, mainOpts *MainOpts) {
 	flagSet.StringVarP(&mainOpts.KubeConfigPath, clientcmd.RecommendedConfigPathFlag, "k", os.Getenv(clientcmd.RecommendedConfigPathEnvVar), "kubeconfig path of shoot data plane cluster - defaults to KUBECONFIG env-var")
 	//downloadFlags.StringVarP(&mainOpts.ControlKubeConfigPath, "kubeconfig-control", "c", os.Getenv("CONTROL_KUBECONFIG"), "kubeconfig path of shoot control plane (seed kubeconfig) - defaults to CONTROL_KUBECONFIG env-var")
 	flagSet.StringVarP(&mainOpts.ObjDir, "obj-dir", "d", "", "Base directory where object YAML's of cluster were downloaded using 'download' sub-command")
-	flagSet.IntVarP(&mainOpts.PoolSize, "pool-size", "p", 130, "go-routine pool size") //TODO: solve the connection reset by peer issue when pool size increases
+	flagSet.IntVarP(&mainOpts.PoolSize, "pool-size", "p", 160, "go-routine pool size") //TODO: solve the connection reset by peer issue when pool size increases
 }
 func SetupDownloadFlagsToOpts(downloadFlags *flag.FlagSet, mainOpts *MainOpts) {
 	setupCommonFlagsToOpts(downloadFlags, mainOpts)

@@ -22,9 +22,9 @@ var (
 		"persistentvolumes",
 		"persistentvolumeclaims",
 		"storage.k8s.io/v1/volumeattachments",
-		"apps/v1/deployments",
-		"apps/v1/statefulsets",
-		"apps/v1/replicasets",
+		//"apps/v1/deployments",
+		//"apps/v1/statefulsets",
+		//"apps/v1/replicasets",
 		"nodes",
 		"storage.k8s.io/v1/csinodes",
 		"pods"}

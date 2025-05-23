@@ -7,9 +7,7 @@ import (
 	"github.com/alitto/pond/v2"
 	"github.com/elankath/kcpcl/api"
 	clientutil "github.com/elankath/kcpcl/core/clientutil"
-	authenticationv1alpha1 "github.com/gardener/gardener/pkg/apis/authentication/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"golang.org/x/exp/slices"
 	"io/fs"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -17,11 +15,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/restmapper"
+	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"sigs.k8s.io/yaml"
-	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,28 +56,8 @@ var (
 		policyv1.AddToScheme,
 		storagev1.AddToScheme,
 	}
-	SupportedScheme = CreateRegisterScheme()
-
-	// KindToPriority TODO: stupid and very dirty. needs to be fixed to support same priority for diff Kinds
-	KindToPriority = map[string]int{
-		//"CustomResourceDefinition": 0,
-		"Namespace":             1,
-		"PriorityClass":         2,
-		"CSIDriver":             3,
-		"CSIStorageCapacity":    4,
-		"StorageClass":          5,
-		"ServiceAccount":        6,
-		"ConfigMap":             7,
-		"PersistentVolume":      8,
-		"PersistentVolumeClaim": 9,
-		"VolumeAttachment":      10,
-		"Deployment":            11,
-		"StatefulSet":           12,
-		"ReplicaSet":            13,
-		"Node":                  14,
-		"CSINode":               15,
-		"Pod":                   16,
-	}
+	SupportedScheme      = CreateRegisterScheme()
+	APIResourcesFilename = "api-resources.yaml"
 )
 
 type GardenerShootCopier struct {
@@ -92,20 +70,6 @@ type GardenerShootCopier struct {
 }
 
 func NewShootCopierFromConfig(copyCfg api.CopierConfig) (copier api.ShootCopier, err error) {
-	scheme := runtime.NewScheme()
-	utilruntime.Must(gardencorev1beta1.AddToScheme(scheme))
-	utilruntime.Must(extensionsv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(corev1.AddToScheme(scheme))
-	utilruntime.Must(appsv1.AddToScheme(scheme))
-	utilruntime.Must(storagev1.AddToScheme(scheme))
-	utilruntime.Must(schedulingv1.AddToScheme(scheme))
-	utilruntime.Must(authenticationv1alpha1.AddToScheme(scheme))
-
-	err = gardencorev1beta1.AddToScheme(scheme)
-	if err != nil {
-		return nil, err
-	}
-
 	var gsc GardenerShootCopier
 	gsc.cfg = copyCfg
 	gsc.dynamicClient, gsc.discoveryClient, err = clientutil.CreateDynamicAndDiscoveryClients(copyCfg.KubeConfigPath, copyCfg.PoolSize)
@@ -124,7 +88,18 @@ func (g *GardenerShootCopier) DownloadObjects(ctx context.Context, baseObjDir st
 	if err != nil {
 		return fmt.Errorf("%w: failed to fetch API group resources: %w", api.ErrDiscovery, err)
 	}
+
+	//err = os.MkdirAll(baseObjDir, 0755)
+	//if err != nil {
+	//	return fmt.Errorf("%w: failed to create directory %q: %w", api.ErrDownloadFailed, baseObjDir, err)
+	//}
+	//err = writeAPIResources(baseObjDir, toAPIResources(apiGroupResources))
+	//if err != nil {
+	//	return fmt.Errorf("%w: %w", api.ErrDownloadFailed, err)
+	//}
+
 	err = ValidateGVRs(apiGroupResources, gvrList)
+
 	if err != nil {
 		return fmt.Errorf("%w: %w", api.ErrDownloadFailed, err)
 	}
@@ -183,7 +158,8 @@ func (g *GardenerShootCopier) DownloadObjects(ctx context.Context, baseObjDir st
 
 func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir string) (err error) {
 	begin := time.Now()
-	objs, err := loadObjects(baseObjDir, g.pool.NewGroupContext(ctx))
+
+	allObjs, err := loadObjects(baseObjDir, g.pool.NewGroupContext(ctx))
 	if err != nil {
 		err = fmt.Errorf("%w: failed to load objects: %w", api.ErrUploadFailed, err)
 		return
@@ -192,133 +168,98 @@ func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir stri
 	if err != nil {
 		return fmt.Errorf("%w: failed to fetch API group resources: %w", api.ErrDiscovery, err)
 	}
-	restMap := restmapper.NewDiscoveryRESTMapper(apiGroupResources)
 
-	uploadGroups, err := createUploadTaskGroups(ctx, g.dynamicClient, restMap, g.pool, objs)
-	if err != nil {
-		err = fmt.Errorf("%w: failed to create upload task groups: %w", api.ErrUploadFailed, err)
-		return
-	}
-	slog.Info("Upload groups.", "numUploadGroups", len(uploadGroups))
-	uploadCount := &atomic.Uint32{}
+	objChunks := chunkObjectsByPriority(allObjs, toAPIResources(apiGroupResources))
+	slog.Info("Grouped upload objects into chunks by priority.", "numObjs", len(allObjs), "numObjChunks", len(objChunks))
+	uploadCounter := &atomic.Uint32{}
 
-	//TODO: remove repetition and improve
-	for _, ug := range uploadGroups {
-		ug.UploadAsync(uploadCount)
-		if g.cfg.OrderKinds {
-			err := ug.TaskGroup.Wait()
-			if err != nil {
-				return fmt.Errorf("%w: failed to upload task group for GVR %q: %w", api.ErrUploadFailed, ug.GVR, err)
-			}
-		}
-	}
-	var end time.Time
-	for _, ug := range uploadGroups {
-		err := ug.TaskGroup.Wait()
-		if err != nil {
-			return fmt.Errorf("%w: failed to upload task group for GVR %q: %w", api.ErrUploadFailed, ug.GVR, err)
-		}
-		end = time.Now()
-		slog.Info("Finished UploadGroup", "kind", ug.GVK.Kind, "kindCount", len(ug.Objects), "uploadCount", uploadCount.Load())
-	}
-	slog.Info("UploadObjects time taken", "duration", end.Sub(begin), "totalUploadCount", uploadCount.Load())
-	return
-}
-
-type UploadGroup struct {
-	Ctx            context.Context
-	GVK            schema.GroupVersionKind
-	GVR            schema.GroupVersionResource
-	Namespace      string
-	TaskGroup      pond.TaskGroup
-	ResourceFacade dynamic.NamespaceableResourceInterface
-	OrderKinds     bool
-	Objects        []*unstructured.Unstructured
-}
-
-func (u *UploadGroup) UploadAsync(uploadCount *atomic.Uint32) {
-	slog.Debug("Commencing UploadGroup", "kind", u.GVK.Kind)
-	for _, o := range u.Objects {
-		obj := o
-		u.TaskGroup.SubmitErr(func() error {
-			var ri dynamic.ResourceInterface = u.ResourceFacade
-			if obj.GetNamespace() != "" {
-				ri = u.ResourceFacade.Namespace(obj.GetNamespace())
-			}
-			createdObj, err := ri.Create(u.Ctx, obj, metav1.CreateOptions{})
-			if err != nil {
-				if errors.IsAlreadyExists(err) {
-					slog.Warn("object already exists, skipping upload.", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
-					return nil
-				}
-				if errors.IsForbidden(err) {
-					slog.Warn("object creation forbidden.", "name", obj.GetName(), "namespace", obj.GetNamespace(), "error", err)
-					return nil
-				}
-				err = fmt.Errorf("failed to create obj of kind %q, name %q and namespace %q: %w",
-					obj.GetKind(), obj.GetName(), obj.GetNamespace(), err)
-				return err
-			}
-			if uploadCount.Load()%3000 == 0 {
-				slog.Info("object created", "uploadCount", uploadCount.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
-			} else {
-				slog.Debug("object created", "uploadCount", uploadCount.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
-			}
-			uploadCount.Add(1)
-			return nil
-		})
-	}
-}
-
-// createUploadTaskGroups creates a map of Kind to UploadGroup for objects of that kind
-func createUploadTaskGroups(ctx context.Context, dynamicClient dynamic.Interface, restMap meta.RESTMapper, pool pond.Pool, objs []*unstructured.Unstructured) (uploadGroups []UploadGroup, err error) {
-	sortObjsByPriority(objs)
-	numKinds := getNumKinds(objs)
-	uploadGroups = make([]UploadGroup, numKinds)
-
-	var kindIndex = -1
-
-	for _, obj := range objs {
-
-		kind := obj.GetKind()
-		ns := obj.GetNamespace()
-		gvk := obj.GroupVersionKind()
-
-		if kindIndex != -1 && kind == uploadGroups[kindIndex].GVK.Kind {
-			uploadGroups[kindIndex].Objects = append(uploadGroups[kindIndex].Objects, obj)
+	mapper := restmapper.NewDiscoveryRESTMapper(apiGroupResources)
+	var kindUploaders = make(map[string]*KindUploader)
+	for _, o := range allObjs {
+		oKind := o.GetKind()
+		uploader, ok := kindUploaders[oKind]
+		if ok {
 			continue
 		}
-
-		kindIndex++
-
+		gvk := o.GroupVersionKind()
 		var restMapping *meta.RESTMapping
-		var resourceFacade dynamic.NamespaceableResourceInterface
-		restMapping, err = restMap.RESTMapping(gvk.GroupKind(), gvk.Version)
+		restMapping, err = mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 		if err != nil {
 			err = fmt.Errorf("%w: failed to fetch REST mapping for %q: %w", api.ErrDiscovery, gvk, err)
 			return
 		}
-
 		gvr := restMapping.Resource
-		resourceFacade = dynamicClient.Resource(gvr)
-		uploadGroups[kindIndex] = UploadGroup{
-			Ctx:            ctx,
+		resourceFacade := g.dynamicClient.Resource(gvr)
+		uploader = &KindUploader{
 			GVK:            gvk,
 			GVR:            gvr,
-			Namespace:      ns,
-			TaskGroup:      pool.NewGroupContext(ctx),
 			ResourceFacade: resourceFacade,
-			Objects:        []*unstructured.Unstructured{obj},
+			Counter:        uploadCounter,
 		}
+		kindUploaders[oKind] = uploader
 	}
+
+	for i, objs := range objChunks {
+		chunkTask := g.pool.NewGroupContext(ctx)
+		for _, o := range objs {
+			u := kindUploaders[o.GetKind()]
+			u.UploadAsync(ctx, chunkTask, o)
+		}
+		err := chunkTask.Wait()
+		if err != nil {
+			return fmt.Errorf("%w: failed to upload chunk %d: %w", api.ErrUploadFailed, i, err)
+		}
+		slog.Info("completed upload chunk", "chunkIndex", i, "numObjs", len(objs), "uploadCounter", uploadCounter.Load())
+	}
+
+	end := time.Now()
+	slog.Info("UploadObjects time taken", "duration", end.Sub(begin), "totalUploadCount", uploadCounter.Load())
 	return
+}
+
+type KindUploader struct {
+	GVK            schema.GroupVersionKind
+	GVR            schema.GroupVersionResource
+	ResourceFacade dynamic.NamespaceableResourceInterface
+	Counter        *atomic.Uint32
+}
+
+func (u *KindUploader) UploadAsync(ctx context.Context, taskGroup pond.TaskGroup, obj *unstructured.Unstructured) {
+	slog.Debug("Commencing upload for obj", "kind", u.GVK.Kind, "objName", obj.GetName(), "objNamespace", obj.GetNamespace())
+	taskGroup.SubmitErr(func() error {
+		var ri dynamic.ResourceInterface = u.ResourceFacade
+		if obj.GetNamespace() != "" {
+			ri = u.ResourceFacade.Namespace(obj.GetNamespace())
+		}
+		createdObj, err := ri.Create(ctx, obj, metav1.CreateOptions{})
+		if err != nil {
+			if errors.IsAlreadyExists(err) {
+				slog.Warn("object already exists, skipping upload.", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+				return nil
+			}
+			if errors.IsForbidden(err) {
+				slog.Warn("object creation forbidden.", "name", obj.GetName(), "namespace", obj.GetNamespace(), "error", err)
+				return nil
+			}
+			err = fmt.Errorf("failed to create obj of kind %q, name %q and namespace %q: %w",
+				obj.GetKind(), obj.GetName(), obj.GetNamespace(), err)
+			return err
+		}
+		if u.Counter.Load()%3000 == 0 {
+			slog.Info("object created", "uploadCount", u.Counter.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
+		} else {
+			slog.Debug("object created", "uploadCount", u.Counter.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
+		}
+		u.Counter.Add(1)
+		return nil
+	})
 }
 
 func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) ([]*unstructured.Unstructured, error) {
 	slog.Info("Loading objects.", "baseObjDir", baseObjDir)
 	objCount := 0
 	var loadMutex sync.Mutex
-	var objs []*unstructured.Unstructured
+	var objs = make([]*unstructured.Unstructured, 0, 3000)
 	err := filepath.WalkDir(baseObjDir, func(path string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("%w: path error for %q: %w", api.ErrLoadObj, path, err)
@@ -361,7 +302,6 @@ func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) ([]*unstructur
 }
 
 func LoadAndCleanObj(objPath string) (obj *unstructured.Unstructured, err error) {
-	// Parse the YAML
 	data, err := os.ReadFile(objPath)
 	if err != nil {
 		err = fmt.Errorf("%w: failed to read %q: %w", api.ErrLoadObj, objPath, err)
@@ -412,9 +352,9 @@ func writeObjectList(objList *unstructured.UnstructuredList, resourceDir string,
 		} else {
 			filename = filepath.Join(resourceDir, sanitizeFileName(obj.GetName())+".yaml")
 		}
-		err = writeYAMLFile(filename, &obj)
+		err = writeObjToYAMLFile(filename, &obj)
 		if err != nil {
-			return
+			return fmt.Errorf("%w: %w", api.ErrDownloadFailed, err)
 		}
 		slog.Info("Downloaded object", "filename", filename)
 	}
@@ -512,61 +452,151 @@ func sanitizeFileName(name string) string {
 	return strings.ReplaceAll(name, "/", "__")
 }
 
-func writeYAMLFile(path string, obj *unstructured.Unstructured) error {
-	f := func() error {
-		data, err := json.Marshal(obj.Object)
-		if err != nil {
-			return err
+func toAPIResources(apiGroupResources []*restmapper.APIGroupResources) (allAPIResources []metav1.APIResource) {
+	for _, agr := range apiGroupResources {
+		prefVersion := agr.Group.PreferredVersion.Version
+		var groupAPIResources []metav1.APIResource
+		if prefVersion != "" {
+			groupAPIResources = agr.VersionedResources[prefVersion]
+		} else {
+			iter := maps.Values(agr.VersionedResources)
+			for p := range iter {
+				groupAPIResources = p
+				break //pick first
+			}
 		}
-		yamlData, err := yaml.JSONToYAML(data)
-		if err != nil {
-			return err
-		}
-		err = os.WriteFile(path, yamlData, 0644)
-		if err != nil {
-			return err
-		}
-		return nil
+		allAPIResources = append(allAPIResources, groupAPIResources...)
 	}
-	err := f()
+	return
+}
+
+func writeAPIResources(objBaseDir string, apiResources []metav1.APIResource) error {
+	path := filepath.Join(objBaseDir, APIResourcesFilename)
+	apiResourceList := metav1.APIResourceList{APIResources: apiResources}
+	err := writeValueToYAMLFile(path, apiResourceList)
 	if err != nil {
-		err = fmt.Errorf("%w: failed to write yaml file %q for obj named %q in namespace %q: %w", api.ErrDownloadFailed, path, obj.GetName(), obj.GetNamespace(), err)
+		err = fmt.Errorf("%w: cannot write apiResourceList to path %q: %w", api.ErrSaveObj, path, err)
+	}
+	slog.Info("Wrote APIResourceList to path.", "path", path, "numAPIResources", len(apiResourceList.APIResources))
+	return err
+}
+func loadAPIResources(objBaseDir string) (apiResources []metav1.APIResource, err error) {
+	path := filepath.Join(objBaseDir, APIResourcesFilename)
+	apiResourceList := metav1.APIResourceList{}
+	err = loadValueFromYAMLFile(path, &apiResourceList)
+	if err != nil {
+		return
+	}
+	apiResources = apiResourceList.APIResources
+	return
+}
+func writeObjToYAMLFile(path string, obj *unstructured.Unstructured) error {
+	err := writeValueToYAMLFile(path, obj.Object)
+	if err != nil {
+		err = fmt.Errorf("%w: cannot write yaml file %q for obj named %q in namespace %q: %w", api.ErrSaveObj, path, obj.GetName(), obj.GetNamespace(), err)
 	}
 	return err
 }
 
-func sortByKind(objs []*unstructured.Unstructured) {
-	sort.Slice(objs, func(i, j int) bool {
-		ki := KindToPriority[objs[i].GetKind()]
-		kj := KindToPriority[objs[j].GetKind()]
-		return ki < kj
-	})
-}
-
-func sortObjsByPriority(objs []*unstructured.Unstructured) {
-	slices.SortFunc(objs, func(a, b *unstructured.Unstructured) int {
-		ap, ok := KindToPriority[a.GetKind()]
-		if !ok {
-			ap = 1 //If not present in KindToPriority it always has lesser priority
-		}
-		bp, ok := KindToPriority[b.GetKind()]
-		if !ok {
-			bp = 1
-		}
-		return cmp.Compare(ap, bp)
-	})
-}
-
-func getNumKinds(objs []*unstructured.Unstructured) int {
-	var count int
-	var lastKind string
-	sortByKind(objs)
-	for _, obj := range objs {
-		if obj.GetKind() == lastKind {
-			continue
-		}
-		lastKind = obj.GetKind()
-		count++
+func writeValueToYAMLFile(path string, val any) error {
+	data, err := json.Marshal(val)
+	if err != nil {
+		return err
 	}
-	return count
+	yamlData, err := yaml.JSONToYAML(data)
+	if err != nil {
+		return err
+	}
+	err = os.WriteFile(path, yamlData, 0644)
+	if err != nil {
+		return err
+	}
+	return nil
 }
+
+func loadValueFromYAMLFile(path string, obj any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		err = fmt.Errorf("%w: failed to read %q: %w", api.ErrLoadObj, path, err)
+		return err
+	}
+	err = yaml.Unmarshal(data, obj)
+	if err != nil {
+		err = fmt.Errorf("%w: failed to unmarshal YAML %q: %w", api.ErrLoadObj, path, err)
+	}
+	return err
+}
+
+func chunkObjectsByPriority(objs []*unstructured.Unstructured, apiResources []metav1.APIResource) (chunks [][]*unstructured.Unstructured) {
+	apiResourcesByKind := make(map[string]metav1.APIResource)
+	for _, ar := range apiResources {
+		apiResourcesByKind[ar.Kind] = ar
+	}
+	slices.SortFunc(objs, func(a, b *unstructured.Unstructured) int {
+		return cmp.Compare(getObjPriority(apiResourcesByKind, a), getObjPriority(apiResourcesByKind, b))
+	})
+	currPrio := getObjPriority(apiResourcesByKind, objs[0])
+	var chunk []*unstructured.Unstructured
+	for _, o := range objs {
+		oPrio := getObjPriority(apiResourcesByKind, o)
+		if currPrio != oPrio { //when priority changes then add chunk to chunks and reset chunk
+			currPrio = oPrio
+			chunks = append(chunks, chunk)
+			chunk = nil
+		}
+		chunk = append(chunk, o)
+	}
+	if len(chunk) > 0 {
+		chunks = append(chunks, chunk)
+	}
+	return
+}
+
+func getObjPriority(apiResourcesByKind map[string]metav1.APIResource, o *unstructured.Unstructured) int {
+	leastPriority := math.MaxInt32
+	nsPriority := 0
+	clusterScopedPriority := 1
+	nodePriority := 2
+	nodeRelatedPriority := 3
+	saPriority := 5
+	cmPriority := 6
+	namespacesScopedPriority := 7
+	kind := o.GetKind()
+	switch kind {
+	case "Namespace":
+		return nsPriority
+	case "Node", "CSINode":
+		return nodePriority
+	case "VolumeAttachment":
+		return nodeRelatedPriority
+	case "ServiceAccount":
+		return saPriority
+	case "ConfigMap", "Secret":
+		return cmPriority
+	case "Pod":
+		return leastPriority
+	}
+	res, ok := apiResourcesByKind[kind]
+	if !ok { // if resource is not found for o's kind then give least priority
+		return leastPriority
+	}
+	if res.Namespaced {
+		return namespacesScopedPriority
+	} else {
+		return clusterScopedPriority
+	}
+}
+
+//func getNumKinds(objs []*unstructured.Unstructured) int {
+//	var count int
+//	var lastKind string
+//	sortByKind(objs)
+//	for _, obj := range objs {
+//		if obj.GetKind() == lastKind {
+//			continue
+//		}
+//		lastKind = obj.GetKind()
+//		count++
+//	}
+//	return count
+//}

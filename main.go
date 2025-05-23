@@ -105,9 +105,7 @@ func ExecDownload(ctx context.Context, subCommandFlags *flag.FlagSet, args []str
 
 	err = copier.DownloadObjects(ctx, mainOpts.ObjDir, gvrList)
 	if err != nil {
-		if errors.Is(err, api.ErrUploadFailed) {
-			exitCode = cli.ExitUploadFailed // TODO: do exit code mappings in main routine.
-		}
+		exitCode = cli.ExitDownloadFailed
 		return
 	}
 	return
