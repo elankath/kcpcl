@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/tools/cache"
 	"maps"
 	"math"
 	"os"
@@ -199,17 +200,38 @@ func (g *GardenerShootCopier) UploadObjects(ctx context.Context, baseObjDir stri
 		kindUploaders[oKind] = uploader
 	}
 
+	var pods []*unstructured.Unstructured
 	for i, objs := range objChunks {
 		chunkTask := g.pool.NewGroupContext(ctx)
+		slices.SortFunc(objs, func(a, b *unstructured.Unstructured) int {
+			return a.GetCreationTimestamp().Compare(b.GetCreationTimestamp().Time)
+		})
 		for _, o := range objs {
 			u := kindUploaders[o.GetKind()]
-			u.UploadAsync(ctx, chunkTask, o)
+			if o.GetKind() == "Pod" {
+				pods = append(pods, o)
+			} else {
+				u.UploadAsync(ctx, chunkTask, o)
+			}
 		}
 		err := chunkTask.Wait()
 		if err != nil {
 			return fmt.Errorf("%w: failed to upload chunk %d: %w", api.ErrUploadFailed, i, err)
 		}
 		slog.Info("completed upload chunk", "chunkIndex", i, "numObjs", len(objs), "uploadCounter", uploadCounter.Load())
+	}
+
+	slices.SortFunc(pods, func(a, b *unstructured.Unstructured) int {
+		return a.GetCreationTimestamp().Compare(b.GetCreationTimestamp().Time)
+	})
+	for i, p := range pods {
+		podKey := cache.NewObjectName(p.GetNamespace(), p.GetName()).String()
+		slog.Info("Pod upload", "num", i, "podKey", podKey, "creationTimestamp", p.GetCreationTimestamp().Time)
+		u := kindUploaders[p.GetKind()]
+		err = u.Upload(ctx, p)
+		if err != nil {
+			return fmt.Errorf("%w: failed to upload object %q, index: %d: %w", api.ErrUploadFailed, podKey, err)
+		}
 	}
 
 	end := time.Now()
@@ -227,32 +249,37 @@ type KindUploader struct {
 func (u *KindUploader) UploadAsync(ctx context.Context, taskGroup pond.TaskGroup, obj *unstructured.Unstructured) {
 	slog.Debug("Commencing upload for obj", "kind", u.GVK.Kind, "objName", obj.GetName(), "objNamespace", obj.GetNamespace())
 	taskGroup.SubmitErr(func() error {
-		var ri dynamic.ResourceInterface = u.ResourceFacade
-		if obj.GetNamespace() != "" {
-			ri = u.ResourceFacade.Namespace(obj.GetNamespace())
-		}
-		createdObj, err := ri.Create(ctx, obj, metav1.CreateOptions{})
-		if err != nil {
-			if errors.IsAlreadyExists(err) {
-				slog.Warn("object already exists, skipping upload.", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
-				return nil
-			}
-			if errors.IsForbidden(err) {
-				slog.Warn("object creation forbidden.", "name", obj.GetName(), "namespace", obj.GetNamespace(), "error", err)
-				return nil
-			}
-			err = fmt.Errorf("failed to create obj of kind %q, name %q and namespace %q: %w",
-				obj.GetKind(), obj.GetName(), obj.GetNamespace(), err)
-			return err
-		}
-		if u.Counter.Load()%3000 == 0 {
-			slog.Info("object created", "uploadCount", u.Counter.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
-		} else {
-			slog.Debug("object created", "uploadCount", u.Counter.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
-		}
-		u.Counter.Add(1)
-		return nil
+		return u.Upload(ctx, obj)
 	})
+}
+
+func (u *KindUploader) Upload(ctx context.Context, obj *unstructured.Unstructured) error {
+	slog.Debug("Commencing upload for obj", "kind", u.GVK.Kind, "objName", obj.GetName(), "objNamespace", obj.GetNamespace())
+	var ri dynamic.ResourceInterface = u.ResourceFacade
+	if obj.GetNamespace() != "" {
+		ri = u.ResourceFacade.Namespace(obj.GetNamespace())
+	}
+	createdObj, err := ri.Create(ctx, obj, metav1.CreateOptions{})
+	if err != nil {
+		if errors.IsAlreadyExists(err) {
+			slog.Warn("object already exists, skipping upload.", "kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+			return nil
+		}
+		if errors.IsForbidden(err) {
+			slog.Warn("object creation forbidden.", "name", obj.GetName(), "namespace", obj.GetNamespace(), "error", err)
+			return nil
+		}
+		err = fmt.Errorf("failed to create obj of kind %q, name %q and namespace %q: %w",
+			obj.GetKind(), obj.GetName(), obj.GetNamespace(), err)
+		return err
+	}
+	if u.Counter.Load()%3000 == 0 {
+		slog.Info("object created", "uploadCount", u.Counter.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
+	} else {
+		slog.Debug("object created", "uploadCount", u.Counter.Load(), "kind", createdObj.GetKind(), "name", createdObj.GetName(), "namespace", createdObj.GetNamespace())
+	}
+	u.Counter.Add(1)
+	return nil
 }
 
 func loadObjects(baseObjDir string, loadTaskGroup pond.TaskGroup) ([]*unstructured.Unstructured, error) {

@@ -69,6 +69,11 @@ build:
     # Include additional build steps, like TypeScript, SCSS or Tailwind compilation here...
 	go build -buildvcs -o=bin/${binary_name} ${main_package_path}
 
+## install: builds & installs the application into $GOBIN
+.PHONY: install
+install: build
+	mkdir -p bin
+	go install -buildvcs .
 # ==================================================================================== #
 # OPERATIONS
 # ==================================================================================== #
