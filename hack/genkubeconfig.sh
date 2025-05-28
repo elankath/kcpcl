@@ -1,3 +1,4 @@
+#!/bin/zsh
 set -euo pipefail
 
 # Get the script's directory
@@ -31,13 +32,10 @@ eval "$(gardenctl kubectl-env zsh)"
 
 echo "✅ kubectl environment is now configured inside this script."
 
-export NAMESPACE=garden-$PROJECT
+export NAMESPACE="garden-${PROJECT}"
 echo "Generating viewer kubeconfig for shoot: $SHOOT and project namespace: $NAMESPACE ..."
-vkcfg=$(kubectl create \
-    -f <(printf '{"spec":{"expirationSeconds":86400}}') \
-    --raw /apis/core.gardener.cloud/v1beta1/namespaces/${NAMESPACE}/shoots/${SHOOT}/viewerkubeconfig | \
-    jq -r ".status.kubeconfig" | \
-    base64 -d)
+resp=$(kubectl create  -f <(printf '{"spec":{"expirationSeconds":86400}}')  --raw "/apis/core.gardener.cloud/v1beta1/namespaces/${NAMESPACE}/shoots/${SHOOT}/viewerkubeconfig")
+vkcfg=$(echo "${resp}" | jq -r ".status.kubeconfig" |  base64 -d)
 clusterName=$(echo "$vkcfg" | yq ".current-context")
 echo "Cluster Name is: $clusterName"
 
